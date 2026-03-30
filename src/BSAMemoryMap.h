@@ -85,7 +85,7 @@ public:
     // Returns nullptr if offset + size would exceed the file.
     const uint8_t* At(uint64_t offset, uint64_t size = 0) const
     {
-        if (offset + size > fileSize_) return nullptr;
+        if (size > fileSize_ || offset > fileSize_ - size) return nullptr;
         return base_ + offset;
     }
 

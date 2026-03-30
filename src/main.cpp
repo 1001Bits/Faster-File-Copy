@@ -1,5 +1,6 @@
 #include "PCH.h"
 #include "ArchiveStream.h"
+#include "DecompCache.h"
 #include "Settings.h"
 #include "BSAMemoryMap.h"
 #include "Hooks.h"
@@ -42,12 +43,22 @@ namespace
     void OnDataReady(SKSE::MessagingInterface::Message* a_msg)
     {
         if (a_msg && a_msg->type == SKSE::MessagingInterface::kDataLoaded) {
-            // Freeze source cache to prevent deadlocks during save load
             Hooks::FreezeSourceCache();
 
-            logger::info("BSAMmap: Data loaded — {} stream replacements, "
-                         "{} mapped reads ({:.1f} MB), {} fallback reads",
-                Hooks::GetStreamReplacements(),
+            // Flush decompression cache to disk (if building)
+            if (Settings::bEnableDecompCache) {
+                auto& dcache = BSA::DecompCache::GetSingleton();
+                dcache.FlushToDisk();
+                logger::info("BSAMmap: DecompCache — {} hits ({:.1f} MB), {} misses",
+                    dcache.GetCacheHits(),
+                    dcache.GetCacheBytes() / (1024.0 * 1024.0),
+                    dcache.GetCacheMisses());
+
+                // Mode 1: start background flush thread for gameplay entries
+                dcache.StartBackgroundFlush();
+            }
+
+            logger::info("BSAMmap: Data loaded — {} mapped reads ({:.1f} MB), {} fallback reads",
                 Hooks::GetMappedReadCount(),
                 Hooks::GetMappedBytesServed() / (1024.0 * 1024.0),
                 Hooks::GetFallbackReadCount());
@@ -95,6 +106,11 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
     if (!mgr.Initialize(dataPath)) {
         logger::warn("BSAMmap: No archives were memory-mapped");
         return true;
+    }
+
+    // Initialize decompression cache (if enabled)
+    if (Settings::bEnableDecompCache) {
+        BSA::DecompCache::GetSingleton().Initialize(dataPath, mgr.GetArchives());
     }
 
     // Allocate SKSE trampoline for call-site hooks

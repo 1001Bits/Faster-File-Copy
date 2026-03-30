@@ -2,6 +2,7 @@
 #include "Hooks.h"
 #include "ArchiveStream.h"
 #include "BSAMemoryMap.h"
+#include "DecompCache.h"
 #include "MmapStream.h"
 #include "Settings.h"
 
@@ -372,20 +373,120 @@ using CompDoRead_t = RE::BSResource::ErrorCode(*)(
 
 static CompDoRead_t s_originalCompDoRead = nullptr;
 
+// Per-stream tracking for both cache serving and cache building.
+struct StreamTracker {
+    const BSA::MappedArchive* archive;
+    std::uint32_t startOffset;
+    std::uint32_t totalSize;
+    std::uint32_t bytesServed;      // bytes served/accumulated so far
+    std::vector<std::uint8_t> accumBuf;  // accumulated decompressed data (build phase)
+};
+
+static std::unordered_map<const void*, StreamTracker> s_streamTrackers;
+static std::mutex s_trackerMtx;
+
 static RE::BSResource::ErrorCode __fastcall HookedCompDoRead(
     const void*     a_this,
     void*           a_buffer,
     std::uint64_t   a_toRead,
     std::uint64_t&  a_read)
 {
+    // Resolve source → archive mapping
     auto* sourcePtr = BSResource::FieldAt<void* const>(a_this, BSResource::Field::Source);
     if (sourcePtr && !SourceLookup(sourcePtr))
         ResolveSource(sourcePtr);
 
+    // ── Decompression cache: try serving from cache ──────────────────
+    if (Settings::bEnableDecompCache && !Settings::bBaselineMode) {
+        auto& dcache = BSA::DecompCache::GetSingleton();
+
+        if (dcache.IsReady() && sourcePtr) {
+            const auto* archive = SourceLookup(sourcePtr);
+            if (archive) {
+                auto startOff = BSResource::FieldAt<const std::uint32_t>(
+                    a_this, BSResource::Field::StartOffset);
+
+                const auto* cached = dcache.Lookup(archive, startOff);
+                if (cached && cached->data) {
+                    // Serve from cache — hold lock for entire operation
+                    std::lock_guard lk(s_trackerMtx);
+                    auto& tracker = s_streamTrackers[a_this];
+                    if (tracker.totalSize == 0) {
+                        tracker.archive = archive;
+                        tracker.startOffset = startOff;
+                        tracker.totalSize = cached->size;
+                        tracker.bytesServed = 0;
+                    }
+
+                    auto remaining = (tracker.bytesServed < cached->size)
+                        ? (cached->size - tracker.bytesServed) : 0u;
+                    auto n = static_cast<std::uint32_t>(
+                        (a_toRead < remaining) ? a_toRead : remaining);
+
+                    if (n > 0) {
+                        std::memcpy(a_buffer, cached->data + tracker.bytesServed, n);
+                        tracker.bytesServed += n;
+                        a_read = n;
+                        dcache.RecordHit(n);
+                        return RE::BSResource::ErrorCode::kNone;
+                    }
+
+                    a_read = 0;
+                    return RE::BSResource::ErrorCode::kNone;
+                }
+            }
+        }
+    }
+
+    // ── Normal path: call original decompressor ─────────────────────
     LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
     auto err = s_originalCompDoRead(a_this, a_buffer, a_toRead, a_read);
     LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
     s_ticksDecomp.fetch_add(t1.QuadPart - t0.QuadPart, std::memory_order_relaxed);
+
+    // ── Decompression cache: record decompressed data ───────────────
+    if (Settings::bEnableDecompCache && !Settings::bBaselineMode
+        && err == RE::BSResource::ErrorCode::kNone && a_read > 0 && sourcePtr)
+    {
+        auto& dcache = BSA::DecompCache::GetSingleton();
+        if (dcache.IsBuilding()) {
+            const auto* archive = SourceLookup(sourcePtr);
+            if (archive) {
+                auto startOff = BSResource::FieldAt<const std::uint32_t>(
+                    a_this, BSResource::Field::StartOffset);
+                auto totalSize = BSResource::FieldAt<const std::uint32_t>(
+                    a_this, BSResource::Field::TotalSize);
+
+                // Accumulate decompressed chunks — hold lock for entire operation
+                bool complete = false;
+                {
+                    std::lock_guard lk(s_trackerMtx);
+                    auto& tracker = s_streamTrackers[a_this];
+                    if (tracker.totalSize == 0) {
+                        tracker.archive = archive;
+                        tracker.startOffset = startOff;
+                        tracker.totalSize = totalSize;
+                        tracker.bytesServed = 0;
+                        if (totalSize > 0 && totalSize < 64 * 1024 * 1024)
+                            tracker.accumBuf.reserve(totalSize);
+                    }
+
+                    auto* readData = static_cast<const std::uint8_t*>(a_buffer);
+                    tracker.accumBuf.insert(tracker.accumBuf.end(),
+                        readData, readData + a_read);
+                    tracker.bytesServed += static_cast<std::uint32_t>(a_read);
+
+                    if (tracker.bytesServed >= tracker.totalSize) {
+                        dcache.RecordDecompressed(archive, startOff,
+                            tracker.accumBuf.data(),
+                            static_cast<std::uint32_t>(tracker.accumBuf.size()));
+                        s_streamTrackers.erase(a_this);
+                    }
+                }
+            }
+        }
+    }
+
     return err;
 }
 
@@ -463,26 +564,30 @@ void Install()
         s_compressedArchiveStreamVtbl = rv.address();
     }
 
-    // ArchiveStream::DoRead vtable hook (populates source cache)
-    {
-        constexpr std::size_t kDoReadIdx = 0x06;
-        auto* entries = reinterpret_cast<std::uintptr_t*>(s_archiveStreamVtbl);
-        s_originalDoRead = reinterpret_cast<DoRead_t>(entries[kDoReadIdx]);
-        REL::safe_write(
-            s_archiveStreamVtbl + kDoReadIdx * sizeof(std::uintptr_t),
-            reinterpret_cast<std::uintptr_t>(&HookedDoRead));
-        logger::info("BSAMmap: ArchiveStream::DoRead hook installed (cache populator)");
-    }
+    if (!Settings::bBaselineMode) {
+        // ArchiveStream::DoRead vtable hook (mmap serve + source cache)
+        {
+            constexpr std::size_t kDoReadIdx = 0x06;
+            auto* entries = reinterpret_cast<std::uintptr_t*>(s_archiveStreamVtbl);
+            s_originalDoRead = reinterpret_cast<DoRead_t>(entries[kDoReadIdx]);
+            REL::safe_write(
+                s_archiveStreamVtbl + kDoReadIdx * sizeof(std::uintptr_t),
+                reinterpret_cast<std::uintptr_t>(&HookedDoRead));
+            logger::info("BSAMmap: ArchiveStream::DoRead hook installed");
+        }
 
-    // CompressedArchiveStream::DoRead vtable hook (populates source cache)
-    {
-        constexpr std::size_t kDoReadIdx = 0x06;
-        auto* entries = reinterpret_cast<std::uintptr_t*>(s_compressedArchiveStreamVtbl);
-        s_originalCompDoRead = reinterpret_cast<CompDoRead_t>(entries[kDoReadIdx]);
-        REL::safe_write(
-            s_compressedArchiveStreamVtbl + kDoReadIdx * sizeof(std::uintptr_t),
-            reinterpret_cast<std::uintptr_t>(&HookedCompDoRead));
-        logger::info("BSAMmap: CompressedArchiveStream::DoRead hook installed (cache populator)");
+        // CompressedArchiveStream::DoRead vtable hook (decomp cache + source cache)
+        {
+            constexpr std::size_t kDoReadIdx = 0x06;
+            auto* entries = reinterpret_cast<std::uintptr_t*>(s_compressedArchiveStreamVtbl);
+            s_originalCompDoRead = reinterpret_cast<CompDoRead_t>(entries[kDoReadIdx]);
+            REL::safe_write(
+                s_compressedArchiveStreamVtbl + kDoReadIdx * sizeof(std::uintptr_t),
+                reinterpret_cast<std::uintptr_t>(&HookedCompDoRead));
+            logger::info("BSAMmap: CompressedArchiveStream::DoRead hook installed");
+        }
+    } else {
+        logger::info("BSAMmap: All hooks skipped (baseline mode — zero modification)");
     }
 
     // SKSE trampoline hook on ReadFromSource call site.
@@ -490,15 +595,17 @@ void Install()
     // other mods), we patch the E8 call instruction in ArchiveStream::DoRead
     // that calls ReadFromSource.  This only touches 5 bytes at the call site
     // and is compatible with other SKSE plugins' trampoline hooks.
-    {
+    if (!Settings::bBaselineMode) {
         auto callSite = FindReadFromSourceCallSite();
         if (callSite) {
             auto& trampoline = SKSE::GetTrampoline();
             s_origReadFromSource = reinterpret_cast<ReadFromSource_t>(
                 trampoline.write_call<5>(callSite,
                     reinterpret_cast<std::uintptr_t>(&HookedReadFromSource)));
-            logger::info("BSAMmap: ReadFromSource call-site hook installed via SKSE trampoline — ALL BSA I/O via mmap");
+            logger::info("BSAMmap: ReadFromSource call-site hook installed via SKSE trampoline");
         }
+    } else {
+        logger::info("BSAMmap: ReadFromSource hook skipped (baseline mode)");
     }
 
     const char* mode = Settings::bBaselineMode ? "BASELINE (passthrough)" : "MMAP (active)";
