@@ -81,6 +81,16 @@ public:
     uint64_t       GetFileSize() const { return fileSize_; }
     uint32_t       GetEntryCount() const { return header_.fileCount; }
 
+    // Touch every page to prefault into OS page cache (call from background thread)
+    void Prefault() const
+    {
+        if (!base_ || fileSize_ == 0) return;
+        volatile std::uint8_t dummy = 0;
+        for (std::uint64_t off = 0; off < fileSize_; off += 4096)
+            dummy += base_[off];
+        (void)dummy;
+    }
+
     // Return a pointer into mapped memory at the given byte offset.
     // Returns nullptr if offset + size would exceed the file.
     const uint8_t* At(uint64_t offset, uint64_t size = 0) const

@@ -91,26 +91,6 @@ bool MappedArchive::Open(const std::filesystem::path& archivePath)
     }
     base_ = view;
 
-    // Prefetch disabled — can cause issues on systems with less RAM than BSA total
-    // TODO: only prefetch BSAs up to a configurable memory budget
-#if 0
-    // Prefetch all pages into RAM in the background.
-    // PrefetchVirtualMemory is non-blocking — the OS starts loading pages
-    // asynchronously.  By the time the game reads BSA data, many pages
-    // are already in the page cache, eliminating page fault latency.
-    {
-        using PrefetchFn_t = BOOL(WINAPI*)(HANDLE, ULONG_PTR, void*, ULONG);
-        static auto prefetchFn = reinterpret_cast<PrefetchFn_t>(
-            GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "PrefetchVirtualMemory"));
-        if (prefetchFn) {
-            struct { PVOID addr; SIZE_T size; } range;
-            range.addr = const_cast<uint8_t*>(base_);
-            range.size = static_cast<SIZE_T>(fileSize_);
-            prefetchFn(GetCurrentProcess(), 1, &range, 0);
-        }
-    }
-#endif
-
     if (!ParseHeader()) {
         Close();
         return false;
@@ -129,7 +109,7 @@ void MappedArchive::Close()
         CloseHandle(static_cast<HANDLE>(mapHandle_));
         mapHandle_ = nullptr;
     }
-    if (fileHandle_ && fileHandle_ != reinterpret_cast<void*>(static_cast<intptr_t>(-1))) {
+    if (fileHandle_ && fileHandle_ != INVALID_HANDLE_VALUE) {
         CloseHandle(static_cast<HANDLE>(fileHandle_));
     }
     fileHandle_ = nullptr;

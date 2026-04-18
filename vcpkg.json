@@ -5,6 +5,7 @@
   "description": "Memory-maps BSA archives for Skyrim SE/AE/VR, eliminating ReadFile syscalls",
   "dependencies": [
     "commonlibsse-ng",
-    "spdlog"
+    "spdlog",
+    "detours"
   ]
 }
