@@ -1,0 +1,65 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": { "type": "STRING", "value": "Release" }
+      },
+      "errors": { "deprecated": true },
+      "hidden": true,
+      "name": "cmake-dev",
+      "warnings": { "deprecated": true, "dev": true }
+    },
+    {
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": {
+          "type": "STRING",
+          "value": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake"
+        },
+        "VCPKG_OVERLAY_PORTS": {
+          "type": "STRING",
+          "value": "${sourceDir}/cmake/ports/"
+        }
+      },
+      "hidden": true,
+      "name": "vcpkg"
+    },
+    {
+      "cacheVariables": {
+        "CMAKE_MSVC_RUNTIME_LIBRARY": {
+          "type": "STRING",
+          "value": "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+        },
+        "VCPKG_TARGET_TRIPLET": {
+          "type": "STRING",
+          "value": "x64-windows-static-md"
+        }
+      },
+      "hidden": true,
+      "name": "windows"
+    },
+    {
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "/EHsc /MP /W4 /external:W0"
+      },
+      "hidden": true,
+      "name": "vs2022-flags"
+    },
+    {
+      "generator": "Visual Studio 17 2022",
+      "inherits": ["vs2022-flags", "cmake-dev", "vcpkg", "windows"],
+      "name": "vs2022-windows-vcpkg",
+      "toolset": "v143"
+    },
+    {
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "cl" },
+      "architecture": { "strategy": "external", "value": "x64" },
+      "toolset": { "strategy": "external", "value": "v143,host=x64" },
+      "generator": "Ninja",
+      "inherits": ["vs2022-flags", "cmake-dev", "vcpkg", "windows"],
+      "description": "Run 'vcvars64.bat' first if building from command line.",
+      "name": "vs2022-ninja-windows-vcpkg"
+    }
+  ]
+}

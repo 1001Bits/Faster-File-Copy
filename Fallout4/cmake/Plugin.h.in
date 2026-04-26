@@ -1,0 +1,7 @@
+#pragma once
+
+namespace Plugin
+{
+    inline constexpr auto NAME = "@PROJECT_NAME@"sv;
+    inline constexpr auto VERSION = REL::Version{ @PROJECT_VERSION_MAJOR@, @PROJECT_VERSION_MINOR@, @PROJECT_VERSION_PATCH@ };
+}

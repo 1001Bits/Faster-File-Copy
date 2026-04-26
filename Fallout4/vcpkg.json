@@ -1,0 +1,20 @@
+{
+  "name": "faster-file-copy-fo4",
+  "version": "1.0.0",
+  "description": "Memory-maps uncompressed BA2 archives for zero-syscall asset reads",
+  "builtin-baseline": "50c0cb48a0cf2f6fc5c7b2c0d2bafbe26d0a7ca2",
+  "dependencies": [
+    "args",
+    "fmt",
+    "rapidcsv",
+    "rsm-mmio",
+    "spdlog",
+    "xbyak",
+    "detours",
+    "zlib"
+  ],
+  "overrides": [
+    { "name": "fmt", "version": "11.0.2" },
+    { "name": "spdlog", "version": "1.14.1" }
+  ]
+}
