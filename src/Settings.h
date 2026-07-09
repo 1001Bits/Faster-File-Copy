@@ -81,13 +81,29 @@ struct Settings
                 return GetProcAddress(nt, "wine_get_version") != nullptr;
             return false;
         }();
-        const int compatDefault = onWine ? 1 : 0;
+
+        // DiskCacheEnabler auto-detect: it also intercepts the engine's BSA
+        // read pipeline; running both invasive paths at once is a known
+        // crash/conflict source. Checked on disk (not GetModuleHandle) because
+        // SKSE loads plugins alphabetically — DiskCacheEnabler ("D") is not in
+        // memory yet when we ("B") load. An explicit INI value still wins.
+        const bool diskCacheEnabler = [&dllPath]() {
+            std::error_code ec;
+            auto pluginsDir = std::filesystem::path(dllPath).parent_path();
+            return std::filesystem::exists(pluginsDir / "DiskCacheEnabler.dll", ec);
+        }();
+
+        const int compatDefault = (onWine || diskCacheEnabler) ? 1 : 0;
         bCompatibilityMode = GetPrivateProfileIntA("General", "bCompatibilityMode", compatDefault, ini.c_str()) != 0;
 
         logger::info("BSAMmap: Settings loaded (enabled={}, mmap={}, baseline={}, measureStats={}, decompCache={}, cacheMode={}, compatibilityMode={}, logReads={}, wine={})",
             bEnabled, bEnableMmap, bBaselineMode, bMeasureStats, bEnableDecompCache, iDecompCacheMode, bCompatibilityMode, bLogReads, onWine);
         if (onWine)
             logger::info("BSAMmap: WINE detected (ntdll!wine_get_version present) — bCompatibilityMode default is 1; set bCompatibilityMode=0 in INI to force factory mode.");
+        if (diskCacheEnabler)
+            logger::warn("BSAMmap: DiskCacheEnabler.dll detected in SKSE/Plugins — defaulting to compatibility mode "
+                         "(inline cache serve, no factory/ReadFromSource hooks) to avoid conflicting BSA-pipeline hooks. "
+                         "Set bCompatibilityMode=0 explicitly to override, or remove one of the two mods.");
 
         if (bBaselineMode)
             logger::info("BSAMmap: *** BASELINE MODE — hooks pass through to original ReadFile ***");

@@ -5,10 +5,15 @@
 namespace BSA
 {
 
-// Bump this when cache format changes to auto-invalidate old caches
-static constexpr std::uint32_t kCacheVersion = 5;
+// Bump this when cache format changes to auto-invalidate old caches.
+// v6: checksum widened from head-64B to head-4KB + tail-64B + length mix —
+//     the old window could not catch a truncated/torn data blob whose first
+//     64 bytes were intact, which would then be served as a silently-corrupt
+//     asset ("some mods just did not load").
+static constexpr std::uint32_t kCacheVersion = 6;
 
-static constexpr std::size_t   kChecksumWindow            = 64;
+static constexpr std::size_t   kChecksumHeadWindow        = 4096;
+static constexpr std::size_t   kChecksumTailWindow        = 64;
 static constexpr int           kBackgroundFlushIntervalSec = 60;
 static constexpr std::uint64_t kBytesPerMB                = 1024ull * 1024ull;
 
@@ -85,11 +90,29 @@ std::uint32_t DecompCache::Checksum(const void* data, std::size_t size)
 {
     auto* p = static_cast<const std::uint8_t*>(data);
     std::uint32_t h = 0x811C9DC5;  // FNV-1a
-    auto n = (size < kChecksumWindow) ? size : kChecksumWindow;
-    for (std::size_t i = 0; i < n; ++i) {
+
+    // Head window: catches wrong-content corruption.
+    const auto head = (size < kChecksumHeadWindow) ? size : kChecksumHeadWindow;
+    for (std::size_t i = 0; i < head; ++i) {
         h ^= p[i];
         h *= 0x01000193;
     }
+
+    // Tail window: catches truncation / torn writes whose head is intact.
+    if (size > head) {
+        const auto tail = ((size - head) < kChecksumTailWindow) ? (size - head)
+                                                                : kChecksumTailWindow;
+        for (std::size_t i = size - tail; i < size; ++i) {
+            h ^= p[i];
+            h *= 0x01000193;
+        }
+    }
+
+    // Mix in the length so a same-prefix, same-suffix resize can't collide.
+    h ^= static_cast<std::uint32_t>(size);
+    h *= 0x01000193;
+    h ^= static_cast<std::uint32_t>(size >> 16);
+    h *= 0x01000193;
     return h;
 }
 

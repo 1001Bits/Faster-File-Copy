@@ -19,10 +19,16 @@ namespace Hooks
 // ═══════════════════════════════════════════════════════════════════════════
 
 // O(1) open-addressing hash table for source → archive lookups.
-// 512 slots, power-of-2 for fast modulo. Only inserts, never deletes.
+// 4096 slots, power-of-2 for fast modulo. Only inserts, never deletes.
 // Lock-free: reads are always safe after a release-store on the key.
+//
+// Sized for very large load orders: the engine creates one source object per
+// loaded archive, and 1000+ plugin setups can exceed 500 BSAs. The previous
+// 512-slot table could saturate there, after which every read on an
+// un-inserted source re-ran the full ResolveSource probe (VirtualQuery +
+// virtual call + path allocation) — a per-read performance cliff.
 
-static constexpr int kHashSlots = 512;
+static constexpr int kHashSlots = 4096;
 static constexpr int kHashMask = kHashSlots - 1;
 
 struct SourceHashEntry {
@@ -45,7 +51,7 @@ static bool SourceLookup(const void* source, const BSA::MappedArchive*& archive)
     auto k = reinterpret_cast<std::uintptr_t>(source);
     auto slot = static_cast<int>((k >> 4) & kHashMask);  // shift past alignment bits
 
-    for (int i = 0; i < 16; ++i) {  // linear probe, max 16 steps
+    for (int i = 0; i < 32; ++i) {  // linear probe, max 32 steps
         auto stored = s_sourceHash[slot].key.load(std::memory_order_acquire);
         if (stored == k) {
             auto cached = s_sourceHash[slot].archive.load(std::memory_order_acquire);
@@ -69,7 +75,7 @@ static void SourceInsert(const void* source, const BSA::MappedArchive* archive)
     auto storedArchive = archive ? archive : kNoMappedArchive;
     auto slot = static_cast<int>((k >> 4) & kHashMask);
 
-    for (int i = 0; i < 16; ++i) {
+    for (int i = 0; i < 32; ++i) {
         auto stored = s_sourceHash[slot].key.load(std::memory_order_relaxed);
         if (stored == k) return;  // already inserted
         if (stored == 0) {
@@ -121,6 +127,46 @@ static void InitRdataRange()
     }
 }
 
+// SEH-guarded raw reads. A C++ `catch (...)` does NOT catch access
+// violations under /EHsc, so a stale/freed pointer here would crash the
+// game despite the old try/catch. These helpers contain no C++ objects
+// with destructors, so __try/__except is legal in them; an AV in any of
+// the guarded reads (or inside the virtual call) is swallowed and the
+// source is negatively cached instead of crashing.
+
+static bool SafeReadPointer(const void* a_addr, void** a_out) noexcept
+{
+    __try {
+        *a_out = *static_cast<void* const*>(a_addr);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool SafeCallDoGetName(void* a_innerStream, std::uintptr_t a_vtbl,
+                              RE::BSFixedString* a_name) noexcept
+{
+    using DoGetName_t = bool (*)(void*, RE::BSFixedString*);
+    __try {
+        auto doGetName = reinterpret_cast<DoGetName_t>(
+            reinterpret_cast<void**>(a_vtbl)[0x0A]);
+        return doGetName && doGetName(a_innerStream, a_name);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool IsReadablePointer(const void* a_ptr) noexcept
+{
+    if (!a_ptr || reinterpret_cast<std::uintptr_t>(a_ptr) < 0x10000)
+        return false;  // null / sentinel values (-1, -2 wrap to huge, caught by VQ)
+    MEMORY_BASIC_INFORMATION mbi{};
+    return VirtualQuery(a_ptr, &mbi, sizeof(mbi)) &&
+           (mbi.State & MEM_COMMIT) &&
+           !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD));
+}
+
 static const BSA::MappedArchive* ResolveSource(const void* source)
 {
     const BSA::MappedArchive* cached = nullptr;
@@ -133,58 +179,48 @@ static const BSA::MappedArchive* ResolveSource(const void* source)
     LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
 
     const BSA::MappedArchive* result = nullptr;
-    try {
-        auto* innerStream = *reinterpret_cast<void* const*>(
-            static_cast<const char*>(source) + 0x28);
+    do {
+        // Validate the source object itself BEFORE reading source+0x28 —
+        // the previous version dereferenced first and validated after,
+        // which crashed on stale stream pointers.
+        if (!IsReadablePointer(static_cast<const char*>(source) + 0x28))
+            break;
+
+        void* innerStream = nullptr;
+        if (!SafeReadPointer(static_cast<const char*>(source) + 0x28, &innerStream))
+            break;
+
         // Validate pointer — must be in a valid committed memory region.
         // Sentinel values like -1 (INVALID_HANDLE_VALUE) or -2 are caught here.
-        if (!innerStream || reinterpret_cast<std::uintptr_t>(innerStream) < 0x10000) {
-            SourceInsert(source, nullptr);
-            LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
-            s_ticksResolve.fetch_add(t1.QuadPart - t0.QuadPart, std::memory_order_relaxed);
-            return nullptr;
-        }
-        {
-            MEMORY_BASIC_INFORMATION mbi{};
-            if (!VirtualQuery(innerStream, &mbi, sizeof(mbi)) ||
-                !(mbi.State & MEM_COMMIT) ||
-                (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) {
-                SourceInsert(source, nullptr);
-                LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
-                s_ticksResolve.fetch_add(t1.QuadPart - t0.QuadPart, std::memory_order_relaxed);
-                return nullptr;
-            }
-        }
-        {
-            // Validate vtable pointer — must be in the game's .rdata section
-            // (where all vtables live). Calling DoGetName on an object with
-            // an unknown vtable can execute arbitrary code and corrupt
-            // heap/stack, causing delayed crashes in other mods.
-            auto innerVtbl = *reinterpret_cast<std::uintptr_t*>(innerStream);
-            if (innerVtbl < s_rdataStart || innerVtbl >= s_rdataEnd) {
-                SourceInsert(source, nullptr);
-                LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
-                s_ticksResolve.fetch_add(t1.QuadPart - t0.QuadPart, std::memory_order_relaxed);
-                return nullptr;
-            }
+        if (!IsReadablePointer(innerStream))
+            break;
 
-            auto** vtbl = reinterpret_cast<void**>(innerVtbl);
-            using DoGetName_t = bool(*)(void*, RE::BSFixedString*);
-            auto doGetName = reinterpret_cast<DoGetName_t>(vtbl[0x0A]);
-            RE::BSFixedString name;
-            if (doGetName(innerStream, &name)) {
-                const char* str = name.c_str();
-                if (str && str[0]) {
+        // Validate vtable pointer — must be in the game's .rdata section
+        // (where all vtables live). Calling DoGetName on an object with
+        // an unknown vtable can execute arbitrary code and corrupt
+        // heap/stack, causing delayed crashes in other mods.
+        void* vtblRaw = nullptr;
+        if (!SafeReadPointer(innerStream, &vtblRaw))
+            break;
+        const auto innerVtbl = reinterpret_cast<std::uintptr_t>(vtblRaw);
+        if (innerVtbl < s_rdataStart || innerVtbl >= s_rdataEnd)
+            break;
+
+        RE::BSFixedString name;
+        if (SafeCallDoGetName(innerStream, innerVtbl, &name)) {
+            const char* str = name.c_str();
+            if (str && str[0]) {
+                try {
                     std::filesystem::path p(str);
                     result = BSA::MemoryMapManager::GetSingleton().FindByName(
                         p.filename().string());
                     if (result)
                         logger::info("BSAMmap: Source {:X} → {}",
                             reinterpret_cast<std::uintptr_t>(source), p.filename().string());
-                }
+                } catch (...) {}
             }
         }
-    } catch (...) {}
+    } while (false);
     SourceInsert(source, result);
 
     LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
@@ -201,6 +237,7 @@ static std::atomic<std::uint64_t> s_mmapBytes{ 0 };
 static std::atomic<std::uint64_t> s_cacheServed{ 0 };
 static std::atomic<std::uint64_t> s_cacheBytes{ 0 };
 static std::atomic<std::uint64_t> s_cacheSkipped{ 0 };
+static std::atomic<std::uint64_t> s_cacheSizeMismatch{ 0 };  // cached size != stream size — never served
 static std::atomic<std::uint64_t> s_fallbackReads{ 0 };
 static std::atomic<std::uint64_t> s_fallbackBytes{ 0 };
 
@@ -821,6 +858,23 @@ static RE::BSResource::ErrorCode __fastcall HookedCompDoRead(
                     auto startOff = BSResource::FieldAt<const std::uint32_t>(
                         a_this, BSResource::Field::StartOffset);
                     auto cached = dcache.Lookup(archive, startOff);
+                    // Serve-time size cross-check: the cached blob's
+                    // decompressed size must equal the stream's own total
+                    // size. A mismatch means the entry belongs to different
+                    // content (stale cache surviving a stamp collision, or an
+                    // offset collision) — serving it would hand the engine a
+                    // wrong-sized asset. Fall through to the real
+                    // decompressor instead; the recorder will re-cache it.
+                    if (cached) {
+                        const auto streamTotal = BSResource::GetTotalSize(a_this);
+                        if (streamTotal != 0 && cached.size != streamTotal) {
+                            s_cacheSizeMismatch.fetch_add(1, std::memory_order_relaxed);
+                            logger::warn("BSAMmap: cache size mismatch at {:X} "
+                                         "(cached {} vs stream {}) — serving via decompressor",
+                                startOff, cached.size, streamTotal);
+                            cached = {};
+                        }
+                    }
                     if (cached) {
                         s_inlineFirstReadHit.fetch_add(1, std::memory_order_relaxed);
                         const std::uint32_t n = (a_toRead < cached.size)
@@ -1045,6 +1099,21 @@ static void __fastcall HookedCreateBsaStream(
     auto cached = dcache.Lookup(archive, startOff);
     if (!cached)
         return;
+
+    // Serve-time size cross-check (same invariant as the inline path): a
+    // cached blob may only replace this stream if its decompressed size
+    // matches the stream's own total size. On mismatch keep the engine's
+    // CompressedArchiveStream — correct, just unaccelerated.
+    {
+        const auto streamTotal = BSResource::GetTotalSize(stream);
+        if (streamTotal != 0 && cached.size != streamTotal) {
+            s_cacheSizeMismatch.fetch_add(1, std::memory_order_relaxed);
+            logger::warn("BSAMmap: factory cache size mismatch at {:X} "
+                         "(cached {} vs stream {}) — keeping engine stream",
+                startOff, cached.size, streamTotal);
+            return;
+        }
+    }
 
     // ── Confirmed hit. From here on the work is unavoidable. ─────────
     LARGE_INTEGER tFactory0; QueryPerformanceCounter(&tFactory0);

@@ -149,7 +149,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
     InitializeLog();
 
     const char* runtime = REL::Module::IsVR() ? "VR" : "SE/AE";
-    logger::warn("BSAMemoryMap v1.6.0 (runtime={}, game={})",
+    logger::warn("BSAMemoryMap v1.8.0 (runtime={}, game={})",
         runtime, REL::Module::get().version().string());
 
     Settings::Load();

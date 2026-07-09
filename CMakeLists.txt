@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.23)
 
 set(NAME "BSAMemoryMap")
-set(VERSION 1.6.0)
+set(VERSION 1.8.0)
 
 message(">>> Start build for '${NAME}' v${VERSION}")
 
@@ -84,11 +84,6 @@ install(TARGETS ${PROJECT_NAME}
   LIBRARY DESTINATION "SKSE/Plugins"
 )
 
-install(FILES
-  "${ROOT_DIR}/BSAMemoryMap.ini"
-  DESTINATION "SKSE/Plugins"
-)
-
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     UNICODE
     _UNICODE
@@ -96,9 +91,8 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     WIN32_LEAN_AND_MEAN
 )
 
-if(CMAKE_GENERATOR MATCHES "Visual Studio")
+if(MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE
-        /MP4
         /W3
         /permissive-
         /Zc:preprocessor
