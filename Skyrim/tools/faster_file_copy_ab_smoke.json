@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "skyrimRuntime": "1.6.1170",
+  "saveName": "Save4_00000000_1_416E69736543_Tamriel_011157_20260511193959_1_1",
+  "repetitions": 1,
+  "settleSeconds": 0,
+  "sampleSeconds": 1,
+  "loadTimeoutSeconds": 240,
+  "runTimeoutSeconds": 300,
+  "requirePopulatedCache": true,
+  "requireStableCache": false,
+  "arms": [
+    {
+      "name": "baseline-stock-smoke",
+      "modVersion": "1.7.1-wip",
+      "cacheFormat": "v7",
+      "dllPath": "..\\build\\vs2022-x64\\Release\\FasterFileCopy.dll",
+      "iniPath": "..\\FasterFileCopy.ini",
+      "effectiveCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-smoke",
+      "zeroCacheLimitMeansAuto": true,
+      "measureStats": true,
+      "loadDriver": "ffc",
+      "waitForWarm": false,
+      "autoLoadDelaySeconds": 4,
+      "warmupRuns": 1,
+      "iniOverrides": {
+        "General": {
+          "bEnabled": "1", "bBaselineMode": "1", "bEnableMmap": "0",
+          "bEnableDecompCache": "0", "bPrefaultDecompCache": "0",
+          "bServeDecompCache": "0", "bEnableDuringSaveLoad": "1",
+          "iDecompCacheMode": "0", "iDecompCacheMaxMB": "2048",
+          "sCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-smoke"
+        }
+      },
+      "limitations": [
+        "The excluded first baseline probe ensures the pinned save loads through the stock path before any cache-learning or serving run."
+      ]
+    },
+    {
+      "name": "capture-serve-off-smoke",
+      "modVersion": "1.7.1-wip",
+      "cacheFormat": "v7",
+      "dllPath": "..\\build\\vs2022-x64\\Release\\FasterFileCopy.dll",
+      "iniPath": "..\\FasterFileCopy.ini",
+      "effectiveCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-smoke",
+      "zeroCacheLimitMeansAuto": true,
+      "measureStats": true,
+      "loadDriver": "ffc",
+      "waitForWarm": true,
+      "autoLoadDelaySeconds": 4,
+      "warmupRuns": 1,
+      "iniOverrides": {
+        "General": {
+          "bEnabled": "1", "bBaselineMode": "0", "bEnableMmap": "1",
+          "bEnableDecompCache": "1", "bPrefaultDecompCache": "1",
+          "bServeDecompCache": "0", "bEnableDuringSaveLoad": "1",
+          "iDecompCacheMode": "0", "iDecompCacheMaxMB": "2048",
+          "sCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-smoke"
+        }
+      },
+      "warmupIniOverrides": { "General": { "iDecompCacheMode": "1" } },
+      "limitations": [
+        "The single excluded learning run captures and commits v7 entries with delivery disabled before either serving arm executes."
+      ]
+    },
+    {
+      "name": "suppress-during-load-smoke",
+      "modVersion": "1.7.1-wip",
+      "cacheFormat": "v7",
+      "dllPath": "..\\build\\vs2022-x64\\Release\\FasterFileCopy.dll",
+      "iniPath": "..\\FasterFileCopy.ini",
+      "effectiveCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-smoke",
+      "zeroCacheLimitMeansAuto": true,
+      "measureStats": true,
+      "loadDriver": "ffc",
+      "waitForWarm": true,
+      "autoLoadDelaySeconds": 4,
+      "warmupRuns": 0,
+      "iniOverrides": {
+        "General": {
+          "bEnabled": "1", "bBaselineMode": "0", "bEnableMmap": "1",
+          "bEnableDecompCache": "1", "bPrefaultDecompCache": "1",
+          "bServeDecompCache": "1", "bEnableDuringSaveLoad": "0",
+          "iDecompCacheMode": "0", "iDecompCacheMaxMB": "2048",
+          "sCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-smoke"
+        }
+      },
+      "limitations": [
+        "Cache delivery remains available outside the save-load phase; this is an isolation control, not a gameplay-streaming benchmark."
+      ]
+    },
+    {
+      "name": "serve-throughout-v7-smoke",
+      "modVersion": "1.7.1-wip",
+      "cacheFormat": "v7",
+      "dllPath": "..\\build\\vs2022-x64\\Release\\FasterFileCopy.dll",
+      "iniPath": "..\\FasterFileCopy.ini",
+      "effectiveCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-smoke",
+      "zeroCacheLimitMeansAuto": true,
+      "measureStats": true,
+      "loadDriver": "ffc",
+      "waitForWarm": true,
+      "autoLoadDelaySeconds": 4,
+      "warmupRuns": 0,
+      "iniOverrides": {
+        "General": {
+          "bEnabled": "1", "bBaselineMode": "0", "bEnableMmap": "1",
+          "bEnableDecompCache": "1", "bPrefaultDecompCache": "1",
+          "bServeDecompCache": "1", "bEnableDuringSaveLoad": "1",
+          "bLogReads": "1",
+          "iDecompCacheMode": "0", "iDecompCacheMaxMB": "2048",
+          "sCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-smoke"
+        }
+      },
+      "limitations": [
+        "One-second post-load smoke validates deterministic loading and early stability, not sustained gameplay streaming."
+      ]
+    }
+  ]
+}

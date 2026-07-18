@@ -1,16 +1,20 @@
 #pragma once
 // BSA Memory Map — BSA file format parser and memory-mapping manager
 //
-// Scans the game's Data directory for BSA archives, memory-maps ALL of them
-// (not just uncompressed — Skyrim BSAs are mostly compressed), and provides
-// O(1) access to any byte range within the mapped files.
+// Scans the game's Data directory for BSA archives. Whole-file, read-only
+// mappings are created only when direct uncompressed reads are enabled;
+// otherwise bounded header/fingerprint reads support the decompression cache.
 //
 // The hook layer (Hooks.cpp) uses this to serve archive reads directly from
 // the page cache, eliminating ReadFile syscalls for both compressed and
 // uncompressed entries (hybrid mmap + decompression mode).
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <mutex>
+#include <optional>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -56,7 +60,8 @@ enum ArchiveFlag : uint32_t
 
 // ── Mapped archive ─────────────────────────────────────────────────────────
 // Represents a single BSA file that has been memory-mapped into our address
-// space.  The mapping is read-only and remains for the lifetime of the object.
+// space when requested. The mapping is read-only and remains for the lifetime
+// of the object; it reserves address space but pages enter RAM only on demand.
 
 class MappedArchive
 {
@@ -69,59 +74,82 @@ public:
     MappedArchive(MappedArchive&& other) noexcept;
     MappedArchive& operator=(MappedArchive&& other) noexcept;
 
-    // Open, memory-map, and parse the BSA header.
-    bool Open(const std::filesystem::path& archivePath);
+    // Open and parse the BSA header. When a_mapFull is true the entire file is
+    // memory-mapped (needed only by the uncompressed mmap read path). When
+    // false, only the header and bounded fingerprint samples are read and no
+    // whole-file view is kept. A read-only file handle remains available for
+    // small metadata reads. Wine/Proton and baseline mode use this form.
+    bool Open(const std::filesystem::path& archivePath, bool a_mapFull = true);
     void Close();
 
-    bool IsOpen() const { return base_ != nullptr; }
+    // Valid = header parsed OK. Decoupled from base_ so header-only archives
+    // (no whole-file view) still count as open for the decomp cache.
+    bool IsOpen() const { return valid_; }
+    bool IsMapped() const { return base_ != nullptr; }
     bool IsDefaultCompressed() const { return defaultCompressed_; }
+    bool HasEmbeddedFileNames() const
+    {
+        return (header_.archiveFlags & ArchiveFlag::kEmbedFileNames) != 0;
+    }
 
     const std::filesystem::path& GetPath() const { return path_; }
     const uint8_t* GetBase() const { return base_; }
     uint64_t       GetFileSize() const { return fileSize_; }
     uint32_t       GetEntryCount() const { return header_.fileCount; }
-
-    // Touch every page to prefault into OS page cache (call from background thread)
-    void Prefault() const
-    {
-        if (!base_ || fileSize_ == 0) return;
-        volatile std::uint8_t dummy = 0;
-        for (std::uint64_t off = 0; off < fileSize_; off += 4096)
-            dummy += base_[off];
-        (void)dummy;
-    }
+    std::uint64_t  GetFingerprint() const { return fingerprint_; }
 
     // Return a pointer into mapped memory at the given byte offset.
     // Returns nullptr if offset + size would exceed the file.
     const uint8_t* At(uint64_t offset, uint64_t size = 0) const
     {
+        if (!base_) return nullptr;  // header-only archive — not mapped for reads
         if (size > fileSize_ || offset > fileSize_ - size) return nullptr;
         return base_ + offset;
     }
 
+    // Copy a bounded byte range from the archive. Whole-file mappings use a
+    // direct memory copy; header-only mode uses the archive's retained handle.
+    // Unlike At(), this therefore works when mmap delivery is disabled.
+    [[nodiscard]] bool ReadAt(
+        std::uint64_t offset, void* destination, std::size_t size) const noexcept;
+
+    // Resolve the authoritative little-endian decompressed-size prefix stored
+    // in this BSA data block. Embedded-name archives place a one-byte length
+    // and that many name bytes before the prefix. Results (including invalid
+    // blocks) are memoized for this immutable, fingerprinted archive
+    // generation so repeated cache hits never fault the original BSA again.
+    [[nodiscard]] std::optional<std::uint32_t> GetDeclaredDecompressedSize(
+        std::uint32_t startOffset) const noexcept;
+
 private:
-    bool ParseHeader();
+    bool ParseHeader(const uint8_t* a_hdr);
+    bool ComputeFingerprint();
 
     std::filesystem::path path_;
     void*          fileHandle_ = nullptr;   // HANDLE
     void*          mapHandle_  = nullptr;   // HANDLE
-    const uint8_t* base_       = nullptr;
+    const uint8_t* base_       = nullptr;   // whole-file view (null = header-only)
     uint64_t       fileSize_   = 0;
+    std::uint64_t  fingerprint_ = 0;
 
     Header   header_{};
     bool     defaultCompressed_ = false;
+    bool     valid_             = false;    // header parsed OK
+    mutable std::mutex readMtx_;
+    // A zero value is a memoized failure; valid BSA declarations are nonzero.
+    mutable std::shared_mutex declaredSizeMtx_;
+    mutable std::unordered_map<std::uint32_t, std::uint32_t> declaredSizes_;
 };
 
 // ── Memory-map manager (singleton) ─────────────────────────────────────────
-// Scans a directory for .bsa files, memory-maps ALL of them, and provides
-// fast name-based lookup.
+// Scans a directory for .bsa files and provides fast name-based lookup.
 
 class MemoryMapManager
 {
 public:
     static MemoryMapManager& GetSingleton();
 
-    // Scan dataPath for .bsa files and memory-map them.
+    // Scan dataPath for .bsa files; map payloads only when enabled.
     bool Initialize(const std::filesystem::path& dataPath);
     void Shutdown();
 
@@ -136,8 +164,11 @@ public:
 private:
     MemoryMapManager() = default;
 
+    mutable std::mutex managerMtx_;
     std::vector<MappedArchive> archives_;
     std::unordered_map<std::string, uint32_t> nameIndex_;
+    std::filesystem::path initializedPath_;
+    bool initializedMapFull_{ false };
 };
 
 }  // namespace BSA

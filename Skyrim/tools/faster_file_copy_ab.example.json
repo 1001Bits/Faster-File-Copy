@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "skyrimRuntime": "1.6.1170",
+  "saveName": "Save4_00000000_1_416E69736543_Tamriel_011157_20260511193959_1_1",
+  "repetitions": 2,
+  "settleSeconds": 5,
+  "sampleSeconds": 30,
+  "loadTimeoutSeconds": 240,
+  "runTimeoutSeconds": 330,
+  "requirePopulatedCache": true,
+  "requireStableCache": true,
+  "arms": [
+    {
+      "name": "current-demand-paged",
+      "modVersion": "1.7.1-wip",
+      "cacheFormat": "v7",
+      "dllPath": "..\\build\\vs2022-x64\\Release\\FasterFileCopy.dll",
+      "iniPath": "..\\FasterFileCopy.ini",
+      "effectiveCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-ab",
+      "zeroCacheLimitMeansAuto": true,
+      "loadDriver": "ffc",
+      "waitForWarm": false,
+      "autoLoadDelaySeconds": 2,
+      "warmupRuns": 2,
+      "iniOverrides": {
+        "General": {
+          "bEnabled": "1",
+          "bBaselineMode": "0",
+          "bEnableMmap": "1",
+          "bEnableDecompCache": "1",
+          "bPrefaultDecompCache": "0",
+          "bServeDecompCache": "1",
+          "iDecompCacheMode": "0",
+          "iDecompCacheMaxMB": "2048",
+          "sCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-ab"
+        }
+      },
+      "warmupIniOverrides": { "General": { "iDecompCacheMode": "1" } },
+      "limitations": []
+    },
+    {
+      "name": "current-prefaulted",
+      "modVersion": "1.7.1-wip",
+      "cacheFormat": "v7",
+      "dllPath": "..\\build\\vs2022-x64\\Release\\FasterFileCopy.dll",
+      "iniPath": "..\\FasterFileCopy.ini",
+      "effectiveCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-ab",
+      "zeroCacheLimitMeansAuto": true,
+      "loadDriver": "ffc",
+      "waitForWarm": true,
+      "autoLoadDelaySeconds": 2,
+      "warmupRuns": 0,
+      "iniOverrides": {
+        "General": {
+          "bEnabled": "1",
+          "bBaselineMode": "0",
+          "bEnableMmap": "1",
+          "bEnableDecompCache": "1",
+          "bPrefaultDecompCache": "1",
+          "bServeDecompCache": "1",
+          "iDecompCacheMode": "0",
+          "iDecompCacheMaxMB": "2048",
+          "sCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-ab"
+        }
+      },
+      "limitations": []
+    }
+  ]
+}

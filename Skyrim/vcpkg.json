@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "faster-file-copy",
+  "version": "1.7.1",
+  "description": "Demand-paged BSA reads and a persistent decompression cache for Skyrim SE/AE/VR",
+  "dependencies": [
+    "commonlibsse-ng",
+    "spdlog"
+  ]
+}

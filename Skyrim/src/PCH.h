@@ -7,6 +7,7 @@
 #include "SKSE/SKSE.h"
 
 #include <Windows.h>
+#include <Psapi.h>
 
 #include <cstdint>
 #include <mutex>
@@ -23,5 +24,3 @@
 using namespace std::literals;
 
 namespace logger = SKSE::log;
-
-#define DLLEXPORT __declspec(dllexport)

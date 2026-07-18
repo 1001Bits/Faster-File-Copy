@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "skyrimRuntime": "1.6.1170",
+  "saveName": "Save4_00000000_1_416E69736543_Tamriel_011157_20260511193959_1_1",
+  "repetitions": 4,
+  "settleSeconds": 5,
+  "sampleSeconds": 65,
+  "loadTimeoutSeconds": 300,
+  "runTimeoutSeconds": 430,
+  "requirePopulatedCache": true,
+  "requireStableCache": true,
+  "arms": [
+    {
+      "name": "released-1.6.4",
+      "modVersion": "1.6.4",
+      "cacheFormat": "v5",
+      "zipPath": "..\\package\\FasterFileCopy-1.6.4.zip",
+      "zipDllEntry": "SKSE\\Plugins\\FasterFileCopy.dll",
+      "zipIniEntry": "SKSE\\Plugins\\FasterFileCopy.ini",
+      "effectiveCacheDir": "C:\\Games\\Skyrim AE 1.6\\Data\\SKSE\\Plugins\\FasterFileCopy_cache",
+      "zeroCacheLimitMeansAuto": false,
+      "measureStats": true,
+      "loadDriver": "legacy_prefault_console",
+      "waitForWarm": true,
+      "autoLoadDelaySeconds": 4,
+      "warmupRuns": 2,
+      "iniOverrides": {
+        "General": {
+          "bEnabled": "1",
+          "bBaselineMode": "0",
+          "bCompatibilityMode": "1",
+          "bEnableMmap": "1",
+          "bEnableDecompCache": "1",
+          "iDecompCacheMode": "0",
+          "iDecompCacheMaxMB": "2048"
+        }
+      },
+      "warmupIniOverrides": {
+        "General": {
+          "iDecompCacheMode": "1"
+        }
+      },
+      "limitations": [
+        "Version 1.6.4 has no in-process benchmark loader, so the runner waits for its prefault-complete log marker and invokes an exact-name console batch; the FFC save-load timer starts after that dispatch path.",
+        "Version 1.6.4 does not expose the current build's structured residency and lookup diagnostics; cross-release conclusions use save-load seconds and PerformanceMod gameplay sampling, not unmatched internal service counters."
+      ]
+    },
+    {
+      "name": "current-1.7.1",
+      "modVersion": "1.7.1",
+      "cacheFormat": "v7",
+      "dllPath": "..\\build\\vs2022-x64\\Release\\FasterFileCopy.dll",
+      "iniPath": "..\\FasterFileCopy.ini",
+      "effectiveCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-release-comparison",
+      "zeroCacheLimitMeansAuto": false,
+      "measureStats": true,
+      "loadDriver": "ffc",
+      "waitForWarm": true,
+      "autoLoadDelaySeconds": 4,
+      "warmupRuns": 2,
+      "iniOverrides": {
+        "General": {
+          "bEnabled": "1",
+          "bBaselineMode": "0",
+          "bEnableMmap": "1",
+          "bEnableDecompCache": "1",
+          "bPrefaultDecompCache": "1",
+          "bServeDecompCache": "1",
+          "bEnableDuringSaveLoad": "1",
+          "iDecompCacheMode": "0",
+          "iDecompCacheMaxMB": "2048",
+          "sCacheDir": "C:\\Development\\BSAMemoryMap\\Skyrim\\artifacts\\persistent-cache\\ffc-v7-release-comparison"
+        }
+      },
+      "warmupIniOverrides": {
+        "General": {
+          "iDecompCacheMode": "1"
+        }
+      },
+      "limitations": [
+        "Current-only structured residency and lookup diagnostics are supporting evidence; the primary cross-release metric is the matched FFC save-load interval."
+      ]
+    }
+  ]
+}

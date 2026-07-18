@@ -1,0 +1,18 @@
+* text=auto
+
+*.c text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.hpp text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+*.json text eol=lf
+*.ini text eol=crlf
+*.md text eol=lf
+
+*.dll binary
+*.lib binary
+*.pdb binary
+*.nupkg binary
+*.png binary
+*.zip binary

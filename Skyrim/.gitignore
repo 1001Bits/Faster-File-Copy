@@ -1,0 +1,8 @@
+/build/
+/package/
+/release/
+/artifacts/
+/_CPack_Packages/
+*.zip
+.claude/
+vcpkg_installed/

@@ -40,10 +40,9 @@
 //
 //   CompressedArchiveStream vtable (13 entries):
 //     [6]  0x140d03130  DoRead         (branches on streamFlags bit 4)
-//     [12] 0x140d02780  GetDataSize    (checks decompState, returns decompressed size)
-//
-//   GlobalLocations vtable:
-//     [3]  0x140d0cb30  DoCreateStream <-- hook target (deep hook)
+//     [12] 0x140d02780  GetDataSize    (returns stored/compressed bytes on the
+//                                      verified runtime/path; never use this as
+//                                      decompression-cache payload length)
 //
 // ========================================================================
 
@@ -93,15 +92,18 @@ namespace BSResource
 
     namespace Field
     {
-        // StreamBase (same on all versions)
+        // Plain ArchiveStream uses this as its entry length. On the verified
+        // CompressedArchiveStream path it is the stored/compressed byte count;
+        // decompression-cache identity must use the BSA block prefix instead.
         constexpr std::size_t TotalSize     = 0x08;
-        constexpr std::size_t RefCountFlags = 0x0C;
 
         // ArchiveStream — use REL::Relocate(SE, AE) at runtime
-        inline std::size_t Source;
-        inline std::size_t StartOffset;
-        inline std::size_t CurrentOffset;
-        inline std::size_t Name;
+        // Safe SE/VR defaults also keep diagnostic construction well-formed
+        // before plugin initialization. Init() selects AE where appropriate.
+        inline std::size_t Source{ 0x10 };
+        inline std::size_t StartOffset{ 0x18 };
+        inline std::size_t CurrentOffset{ 0x1C };
+        inline std::size_t Name{ 0x20 };
 
         inline void Init()
         {
@@ -111,29 +113,6 @@ namespace BSResource
             Name          = REL::Relocate(0x20, 0x28);
         }
     }
-
-    // ────────────────────────────────────────────────────────────────────
-    // StreamFlags bits (field at offset 0x10)
-    //
-    // Verified from CompressedArchiveStream::DoRead, DoOpen, DoClose, DoClone:
-    //   - DoRead checks bit 4 to select read path
-    //   - DoClose checks bit 5 and bit 6 for cleanup
-    //   - DoClone copies bits 4-11 from source (mask 0xFF0)
-    //   - DoClose clears bits 4-11 (mask 0xFFFFF00F) before setting state
-    //   - CopyCtor keeps only bit 0 (mask 0x01)
-    // ────────────────────────────────────────────────────────────────────
-
-    enum StreamFlag : std::uint32_t
-    {
-        kWritable       = 1 << 0,   // 0x01 — writable stream (preserved in copy ctor)
-        // bits 1-3: unknown
-        kDecompReady    = 1 << 4,   // 0x10 — decompression initialized, use decomp read path
-        kInitialized    = 1 << 5,   // 0x20 — stream has been opened/initialized
-        kDecompType     = 1 << 6,   // 0x40 — decompression type flag (checked in DoClose)
-        kDecompAlt      = 1 << 7,   // 0x80 — alternate decompression path (js/jns check)
-        // bits 8-11: additional compressed state
-        kCompStateMask  = 0xFF0,    // bits 4-11 collectively — compressed stream state
-    };
 
     // ────────────────────────────────────────────────────────────────────
     // Safe field accessors
@@ -149,49 +128,6 @@ namespace BSResource
     inline const T& FieldAt(const void* obj, std::size_t offset)
     {
         return *reinterpret_cast<const T*>(static_cast<const char*>(obj) + offset);
-    }
-
-    // Convenience accessors for the most-used fields
-    inline std::uint32_t GetStartOffset(const void* stream)   { return FieldAt<const std::uint32_t>(stream, Field::StartOffset); }
-    inline std::uint32_t GetCurrentOffset(const void* stream) { return FieldAt<const std::uint32_t>(stream, Field::CurrentOffset); }
-    inline std::uint32_t GetTotalSize(const void* stream)     { return FieldAt<const std::uint32_t>(stream, Field::TotalSize); }
-    // GetStreamFlags removed — streamFlags doesn't exist on SE
-    inline void*         GetSource(const void* stream)        { return FieldAt<void* const>(stream, Field::Source); }
-
-    // ────────────────────────────────────────────────────────────────────
-    // Vtable type checks
-    // ────────────────────────────────────────────────────────────────────
-
-    inline bool IsArchiveStream(const void* stream)
-    {
-        if (!stream) return false;
-        static const auto vtbl = REL::Relocation<std::uintptr_t>{
-            REL::VariantID(285761, 236985, 0x17ec318)  // SE, AE, VR
-        }.address();
-        return *reinterpret_cast<const std::uintptr_t*>(stream) == vtbl;
-    }
-
-    inline bool IsCompressedArchiveStream(const void* stream)
-    {
-        if (!stream) return false;
-        static const auto vtbl = REL::Relocation<std::uintptr_t>{
-            REL::VariantID(285762, 236987, 0x17ec388)  // SE, AE, VR
-        }.address();
-        return *reinterpret_cast<const std::uintptr_t*>(stream) == vtbl;
-    }
-
-    inline bool IsAnyArchiveStream(const void* stream)
-    {
-        return IsArchiveStream(stream) || IsCompressedArchiveStream(stream);
-    }
-
-    // Check if this is an uncompressed archive stream
-    // (ArchiveStream with no decompression flags set)
-    inline bool IsUncompressedArchiveStream(const void* stream)
-    {
-        return IsArchiveStream(stream);
-        // ArchiveStream class is ONLY used for uncompressed entries.
-        // CompressedArchiveStream is a separate class for compressed entries.
     }
 
 }  // namespace BSResource
